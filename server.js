@@ -25,7 +25,7 @@ app.post('/api/chat', async (req, res) => {
     const data = await response.json();
     res.json({ reply: data.choices[0].message.content });
   } catch (err) {
-    res.status(500).json({ error: 'OpenAI API 呼び出し失敗' });
+    res.status(500).json({ error: 'API 呼び出し失敗' });
   }
 });
 
