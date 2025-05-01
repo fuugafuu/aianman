@@ -1,127 +1,169 @@
-
 <!DOCTYPE html>
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>Advanced Iron Man HUD</title>
-  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500&display=swap" rel="stylesheet">
+  <title>Iron Man HUD System</title>
   <style>
     body {
       margin: 0;
-      overflow: hidden;
       background: black;
+      color: cyan;
       font-family: 'Orbitron', sans-serif;
+      overflow: hidden;
     }
+
     #video, #canvas {
       position: absolute;
-      top: 50%;
-      left: 50%;
+      top: 50%; left: 50%;
       transform: translate(-50%, -50%);
-      width: 80vw;
-      height: 60vh;
-      object-fit: cover;
+      width: 80vw; height: 60vh;
       border-radius: 20px;
       box-shadow: 0 0 40px cyan;
+    }
+
+    #controls {
+      position: fixed;
+      top: 20px; left: 20px;
+      z-index: 10;
+    }
+
+    button {
+      background: black;
+      border: 2px solid cyan;
+      color: cyan;
+      padding: 10px 20px;
+      font-size: 16px;
+      cursor: pointer;
+      border-radius: 10px;
+    }
+
+    #clock {
+      position: fixed;
+      top: 20px; right: 20px;
+      font-size: 24px;
     }
   </style>
 </head>
 <body>
+  <div id="controls">
+    <button onclick="startSystem()">起動</button>
+    <button onclick="stopSystem()">停止</button>
+  </div>
+  <div id="clock"></div>
   <video id="video" autoplay muted playsinline></video>
   <canvas id="canvas"></canvas>
 
   <script src="https://cdn.jsdelivr.net/npm/face-api.js"></script>
-  <audio id="lockon-sound" src="lockon.mp3"></audio>
+  <audio id="lockon-sound" src="https://cdn.pixabay.com/download/audio/2022/03/15/audio_52e38d4b70.mp3"></audio>
 
   <script>
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
     const lockonSound = document.getElementById('lockon-sound');
-
+    let stream = null;
     let targets = [];
+    let detectionLoop = null;
+    let isRunning = false;
+    let recognition;
     const smoothing = 0.1;
     let deviceTiltWarning = false;
 
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) alert('音声認識がこのブラウザでサポートされていません。');
-    const recognition = new SpeechRecognition();
-    recognition.lang = navigator.language === 'en-US' ? 'en-US' : 'ja-JP';
-    recognition.continuous = true;
-    recognition.start();
+    // 時計起動
+    function startClock() {
+      const clock = document.getElementById('clock');
+      setInterval(() => {
+        const now = new Date();
+        clock.textContent = now.toLocaleTimeString();
+      }, 1000);
+    }
 
-    recognition.onresult = (event) => {
-      const transcript = event.results[event.results.length - 1][0].transcript.trim();
-      if (transcript.includes('ロックオン') || transcript.toLowerCase().includes('lock on')) {
-        targets = [];
-      }
-      if (transcript.includes('ロックオン解除') || transcript.toLowerCase().includes('unlock')) {
-        targets = [];
-      }
-    };
-
-    recognition.onerror = (e) => {
-      console.warn('音声認識エラー:', e.error);
-      if (e.error === 'not-allowed') {
-        alert('マイクのアクセスが許可されていません。ブラウザ設定を確認してください。');
-      }
-    };
-
+    // デバイス傾き検出
     window.addEventListener('deviceorientation', (event) => {
       const gamma = event.gamma || 0;
       deviceTiltWarning = Math.abs(gamma) > 30;
     });
 
-    navigator.mediaDevices.getUserMedia({
-      video: {
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
-        facingMode: "user"
-      }
-    }).then(stream => {
+    // 起動処理
+    async function startSystem() {
+      if (isRunning) return;
+      isRunning = true;
+      startClock();
+
+      // 音声認識
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      recognition = new SR();
+      recognition.lang = 'ja-JP';
+      recognition.continuous = true;
+      recognition.start();
+      recognition.onresult = (event) => {
+        const transcript = event.results[event.results.length - 1][0].transcript.trim();
+        if (transcript.includes('ロックオン') || transcript.toLowerCase().includes('lock on')) {
+          targets = []; // reset
+        }
+        if (transcript.includes('ロックオン解除') || transcript.toLowerCase().includes('unlock')) {
+          targets = [];
+        }
+      };
+
+      // カメラ起動
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
       video.srcObject = stream;
-    }).catch(err => {
-      alert('カメラが使用できません：' + err.message);
-    });
 
-    Promise.all([
-      faceapi.nets.tinyFaceDetector.loadFromUri('https://cdn.jsdelivr.net/npm/face-api.js/models')
-    ]).then(startDetection);
+      // モデル読み込み
+      await faceapi.nets.tinyFaceDetector.loadFromUri('https://cdn.jsdelivr.net/npm/face-api.js/models');
 
-    function startDetection() {
-      video.addEventListener('play', () => {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        detectFace();
-      });
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+
+      detectLoop();
     }
 
-    async function detectFace() {
+    // 停止処理
+    function stopSystem() {
+      if (!isRunning) return;
+      isRunning = false;
+
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        stream = null;
+      }
+
+      if (recognition) recognition.stop();
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      cancelAnimationFrame(detectionLoop);
+    }
+
+    // 顔検出ループ
+    async function detectLoop() {
+      if (!isRunning) return;
+
       const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions());
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       if (deviceTiltWarning) {
         ctx.fillStyle = 'orange';
-        ctx.font = 'bold 40px Orbitron, Arial';
+        ctx.font = 'bold 32px Arial';
         ctx.fillText('DEVICE TILTED', canvas.width / 2 - 160, 80);
       }
 
       detections.forEach((detection, i) => {
         const box = detection.box;
-        const centerX = box.x + box.width / 2;
-        const centerY = box.y + box.height / 2;
+        const x = box.x + box.width / 2;
+        const y = box.y + box.height / 2;
 
         if (!targets[i]) {
-          targets[i] = { id: `TGT-${i + 1}`, x: centerX, y: centerY };
+          targets[i] = { id: `TGT-${i+1}`, x, y };
           lockonSound.play();
         } else {
-          targets[i].x += (centerX - targets[i].x) * smoothing;
-          targets[i].y += (centerY - targets[i].y) * smoothing;
+          targets[i].x += (x - targets[i].x) * smoothing;
+          targets[i].y += (y - targets[i].y) * smoothing;
         }
 
         drawHUD(targets[i].x, targets[i].y, targets[i].id);
       });
 
-      requestAnimationFrame(detectFace);
+      detectionLoop = requestAnimationFrame(detectLoop);
     }
 
     function drawHUD(x, y, id) {
@@ -164,10 +206,6 @@
       ctx.fillText('LOCKED', x - 35, y - radius - 50);
       ctx.fillText(id, x - 35, y - radius - 25);
     }
-
-    document.body.addEventListener('click', () => {
-      video.play().catch(() => {});
-    });
   </script>
 </body>
 </html>
