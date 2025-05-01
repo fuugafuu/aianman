@@ -1,27 +1,24 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8" />
-  <title>音声アシスタント</title>
+  <meta charset="UTF-8">
+  <title>音声だけアシスタント</title>
 </head>
 <body>
-  <button onclick="startRecognition()">🎤 話す</button>
-  <div id="response"></div>
+  <button onclick="startAssistant()">🎤 話しかける</button>
 
   <script>
-    const responseDiv = document.getElementById('response');
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     const recognition = new SR();
     recognition.lang = 'ja-JP';
     recognition.continuous = false;
 
-    function startRecognition() {
+    async function startAssistant() {
       recognition.start();
     }
 
     recognition.onresult = async (event) => {
       const text = event.results[0][0].transcript;
-      responseDiv.textContent = `🗣 あなた: ${text}`;
 
       const res = await fetch('/api/chat', {
         method: 'POST',
@@ -31,7 +28,6 @@
 
       const data = await res.json();
       const reply = data.reply;
-      responseDiv.innerHTML += `<br>🤖 AI: ${reply}`;
 
       const utterance = new SpeechSynthesisUtterance(reply);
       utterance.lang = 'ja-JP';
