@@ -1,0 +1,173 @@
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>Advanced Iron Man HUD</title>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500&display=swap" rel="stylesheet">
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: black;
+      font-family: 'Orbitron', sans-serif;
+    }
+    #video, #canvas {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 80vw;
+      height: 60vh;
+      object-fit: cover;
+      border-radius: 20px;
+      box-shadow: 0 0 40px cyan;
+    }
+  </style>
+</head>
+<body>
+  <video id="video" autoplay muted playsinline></video>
+  <canvas id="canvas"></canvas>
+
+  <script src="https://cdn.jsdelivr.net/npm/face-api.js"></script>
+  <audio id="lockon-sound" src="lockon.mp3"></audio>
+
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const lockonSound = document.getElementById('lockon-sound');
+
+    let targets = [];
+    const smoothing = 0.1;
+    let deviceTiltWarning = false;
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) alert('音声認識がこのブラウザでサポートされていません。');
+    const recognition = new SpeechRecognition();
+    recognition.lang = navigator.language === 'en-US' ? 'en-US' : 'ja-JP';
+    recognition.continuous = true;
+    recognition.start();
+
+    recognition.onresult = (event) => {
+      const transcript = event.results[event.results.length - 1][0].transcript.trim();
+      if (transcript.includes('ロックオン') || transcript.toLowerCase().includes('lock on')) {
+        targets = [];
+      }
+      if (transcript.includes('ロックオン解除') || transcript.toLowerCase().includes('unlock')) {
+        targets = [];
+      }
+    };
+
+    recognition.onerror = (e) => {
+      console.warn('音声認識エラー:', e.error);
+      if (e.error === 'not-allowed') {
+        alert('マイクのアクセスが許可されていません。ブラウザ設定を確認してください。');
+      }
+    };
+
+    window.addEventListener('deviceorientation', (event) => {
+      const gamma = event.gamma || 0;
+      deviceTiltWarning = Math.abs(gamma) > 30;
+    });
+
+    navigator.mediaDevices.getUserMedia({
+      video: {
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        facingMode: "user"
+      }
+    }).then(stream => {
+      video.srcObject = stream;
+    }).catch(err => {
+      alert('カメラが使用できません：' + err.message);
+    });
+
+    Promise.all([
+      faceapi.nets.tinyFaceDetector.loadFromUri('https://cdn.jsdelivr.net/npm/face-api.js/models')
+    ]).then(startDetection);
+
+    function startDetection() {
+      video.addEventListener('play', () => {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        detectFace();
+      });
+    }
+
+    async function detectFace() {
+      const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions());
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (deviceTiltWarning) {
+        ctx.fillStyle = 'orange';
+        ctx.font = 'bold 40px Orbitron, Arial';
+        ctx.fillText('DEVICE TILTED', canvas.width / 2 - 160, 80);
+      }
+
+      detections.forEach((detection, i) => {
+        const box = detection.box;
+        const centerX = box.x + box.width / 2;
+        const centerY = box.y + box.height / 2;
+
+        if (!targets[i]) {
+          targets[i] = { id: `TGT-${i + 1}`, x: centerX, y: centerY };
+          lockonSound.play();
+        } else {
+          targets[i].x += (centerX - targets[i].x) * smoothing;
+          targets[i].y += (centerY - targets[i].y) * smoothing;
+        }
+
+        drawHUD(targets[i].x, targets[i].y, targets[i].id);
+      });
+
+      requestAnimationFrame(detectFace);
+    }
+
+    function drawHUD(x, y, id) {
+      const radius = 80;
+      const time = Date.now() / 200;
+      const pulse = 10 + Math.sin(time) * 5;
+
+      ctx.strokeStyle = 'aqua';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(x, y, radius + pulse, 0, 2 * Math.PI);
+      ctx.stroke();
+
+      ctx.strokeStyle = 'cyan';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, 2 * Math.PI);
+      ctx.stroke();
+
+      for (let i = 0; i < 4; i++) {
+        const angle = time + (i * Math.PI / 2);
+        const sx = x + Math.cos(angle) * (radius + 30);
+        const sy = y + Math.sin(angle) * (radius + 30);
+        ctx.beginPath();
+        ctx.arc(sx, sy, 5, 0, 2 * Math.PI);
+        ctx.fillStyle = 'aqua';
+        ctx.fill();
+      }
+
+      ctx.strokeStyle = 'cyan';
+      ctx.beginPath();
+      ctx.moveTo(x - radius - 20, y);
+      ctx.lineTo(x + radius + 20, y);
+      ctx.moveTo(x, y - radius - 20);
+      ctx.lineTo(x, y + radius + 20);
+      ctx.stroke();
+
+      ctx.fillStyle = 'cyan';
+      ctx.font = 'bold 20px Orbitron, Arial';
+      ctx.fillText('LOCKED', x - 35, y - radius - 50);
+      ctx.fillText(id, x - 35, y - radius - 25);
+    }
+
+    document.body.addEventListener('click', () => {
+      video.play().catch(() => {});
+    });
+  </script>
+</body>
+</html>
