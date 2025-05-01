@@ -39,8 +39,21 @@
 
     #clock {
       position: fixed;
-      top: 20px; right: 20px;
-      font-size: 24px;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 32px;
+      opacity: 0;
+      transition: all 2s ease;
+      z-index: 1000;
+    }
+
+    #clock.active {
+      top: 20px;
+      left: auto;
+      right: 20px;
+      transform: none;
+      opacity: 1;
     }
   </style>
 </head>
@@ -61,6 +74,8 @@
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
     const lockonSound = document.getElementById('lockon-sound');
+    const clock = document.getElementById('clock');
+
     let stream = null;
     let targets = [];
     let detectionLoop = null;
@@ -71,7 +86,12 @@
 
     // 時計起動
     function startClock() {
-      const clock = document.getElementById('clock');
+      clock.classList.remove("active");
+      clock.style.opacity = 1;
+      setTimeout(() => {
+        clock.classList.add("active");
+      }, 1000);
+
       setInterval(() => {
         const now = new Date();
         clock.textContent = now.toLocaleTimeString();
@@ -84,35 +104,44 @@
       deviceTiltWarning = Math.abs(gamma) > 30;
     });
 
+    // 音声認識の起動
+    function setupRecognition() {
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      recognition = new SR();
+      recognition.lang = 'ja-JP';
+      recognition.continuous = true;
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[event.results.length - 1][0].transcript.trim().toLowerCase();
+        console.log("音声入力:", transcript);
+
+        if (transcript.match(/(起動|スタート|オン|始め|起きて)/)) {
+          startSystem();
+        } else if (transcript.match(/(停止|ストップ|切って|止めて|オフ|終了)/)) {
+          stopSystem();
+        } else if (transcript.includes("ロックオン")) {
+          targets = [];
+        } else if (transcript.includes("解除")) {
+          targets = [];
+        }
+      };
+
+      recognition.onerror = (e) => console.error("音声認識エラー:", e);
+      recognition.start();
+    }
+
     // 起動処理
     async function startSystem() {
       if (isRunning) return;
       isRunning = true;
       startClock();
 
-      // 音声認識
-      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-      recognition = new SR();
-      recognition.lang = 'ja-JP';
-      recognition.continuous = true;
-      recognition.start();
-      recognition.onresult = (event) => {
-        const transcript = event.results[event.results.length - 1][0].transcript.trim();
-        if (transcript.includes('ロックオン') || transcript.toLowerCase().includes('lock on')) {
-          targets = []; // reset
-        }
-        if (transcript.includes('ロックオン解除') || transcript.toLowerCase().includes('unlock')) {
-          targets = [];
-        }
-      };
+      if (!recognition) setupRecognition();
 
-      // カメラ起動
       stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
       video.srcObject = stream;
 
-      // モデル読み込み
       await faceapi.nets.tinyFaceDetector.loadFromUri('https://cdn.jsdelivr.net/npm/face-api.js/models');
-
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
 
@@ -206,6 +235,11 @@
       ctx.fillText('LOCKED', x - 35, y - radius - 50);
       ctx.fillText(id, x - 35, y - radius - 25);
     }
+
+    // 初回のみ音声起動待機
+    window.onload = () => {
+      setupRecognition();
+    };
   </script>
 </body>
 </html>
